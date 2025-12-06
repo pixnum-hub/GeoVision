@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>GeoVision - Geoengineering Simulator</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<style>
+:root {
+  --bg:#f0f2f5; --panel:#fff; --text:#111; --sub:#555; --primary:#0b6; --accent:#3399ff;
+}
+[data-theme="dark"] {
+  --bg:#121212; --panel:#1e1e1e; --text:#eee; --sub:#aaa; --primary:#0b6; --accent:#3399ff;
+}
+body{margin:0;font-family:Inter,system-ui,Arial;background:var(--bg);color:var(--text);}
+.container{max-width:600px;margin:auto;padding:12px;}
+.header{display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;}
+.header h1{margin:0;font-size:20px;flex:1;}
+#darkToggle{border:none;border-radius:50%;width:36px;height:36px;background:var(--primary);color:#fff;font-size:16px;cursor:pointer;}
+#startYear{padding:6px 8px;border-radius:8px;border:1px solid #ccc;width:120px;}
+.tabs{display:flex;overflow-x:auto;gap:4px;border-bottom:1px solid #ccc;margin:8px 0;}
+.tab{flex:1;min-width:100px;padding:8px 12px;text-align:center;cursor:pointer;border-radius:8px 8px 0 0;background:#ddd;color:#111;white-space:nowrap;}
+.tab.active{background:var(--primary);color:#fff;}
+.panel{background:var(--panel);border-radius:14px;padding:12px;box-shadow:0 4px 16px rgba(0,0,0,0.05);margin-bottom:12px;}
+label{display:flex;justify-content:space-between;margin-top:10px;font-size:14px;flex-wrap:wrap;}
+input[type=range]{width:100%;margin-top:6px;}
+.output-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:10px;}
+.output-card{background:var(--bg);padding:10px;border-radius:12px;text-align:center;box-shadow:0 4px 10px rgba(0,0,0,0.05);font-size:14px;}
+button.action{padding:10px 12px;border:none;border-radius:12px;background:var(--primary);color:#fff;cursor:pointer;margin-top:8px;width:48%;}
+button.secondary{background:#555;color:#fff;width:48%;}
+@media(min-width:601px){.container{max-width:900px;}}
+</style>
+</head>
+<body data-theme="light">
+<div class="container">
+  <div class="header">
+    <h1>GeoVision</h1>
+    <input type="number" id="startYear" title="Start Year">
+    <button id="darkToggle">☀️</button>
+  </div>
+
+  <div class="tabs">
+    <div class="tab active" data-tab="controls">Controls</div>
+    <div class="tab" data-tab="chart">Chart</div>
+    <div class="tab" data-tab="outputs">Outputs</div>
+  </div>
+
+  <div class="panel" id="controlsTab">
+    <h3>Forcing Controls</h3>
+    <div id="slidersContainer"></div>
+    <h3 style="margin-top:12px;">Simulation Actions</h3>
+    <div style="display:flex;gap:4px;flex-wrap:wrap;">
+      <button class="action" id="runYear">Run 1 Year</button>
+      <button class="action secondary" id="auto">Play Timeline</button>
+      <button class="action secondary" id="reset">Reset</button>
+      <button class="action secondary" id="export">Export CSV</button>
+    </div>
+  </div>
+
+  <div class="panel" id="chartTab" style="display:none;">
+    <canvas id="chartCanvas" height="300"></canvas>
+  </div>
+
+  <div class="panel" id="outputsTab" style="display:none;">
+    <h3>Simulation Outputs</h3>
+    <div class="output-grid">
+      <div class="output-card">Temp: <b id="tempOut">0°C</b></div>
+      <div class="output-card">Precip: <b id="precOut">0%</b></div>
+      <div class="output-card">CO₂: <b id="co2Out">420 ppm</b></div>
+      <div class="output-card">Sea Level: <b id="slOut">0 cm</b></div>
+      <div class="output-card">EWS: <b id="ewsOut">0</b></div>
+      <div class="output-card">Cloud: <b id="cloudOut">0%</b></div>
+      <div class="output-card">Eco Score: <b id="ecoOut">0</b></div>
+    </div>
+  </div>
+</div>
+
+<script>
+// Tabs
+const tabs=document.querySelectorAll('.tab');
+const controlsTab=document.getElementById('controlsTab');
+const outputsTab=document.getElementById('outputsTab');
+const chartTab=document.getElementById('chartTab');
+tabs.forEach(tab=>{
+  tab.addEventListener('click',()=>{
+    tabs.forEach(t=>t.classList.remove('active'));
+    tab.classList.add('active');
+    controlsTab.style.display=tab.dataset.tab==='controls'?'block':'none';
+    outputsTab.style.display=tab.dataset.tab==='outputs'?'block':'none';
+    chartTab.style.display=tab.dataset.tab==='chart'?'block':'none';
+    if(tab.dataset.tab==='chart') chart.resize();
+  });
+});
+
+// Dark Mode
+const darkToggle=document.getElementById('darkToggle');
+darkToggle.onclick=()=>{
+  const theme=document.body.dataset.theme;
+  document.body.dataset.theme=theme==='light'?'dark':'light';
+  darkToggle.textContent=theme==='light'?'🌙':'☀️';
+};
+
+// Start Year input
+const currentYear=new Date().getFullYear();
+const startYearInput=document.getElementById('startYear');
+startYearInput.min=currentYear-100000;
+startYearInput.max=currentYear+100000;
+startYearInput.value=currentYear;
+
+// Sliders
+const sliderConfigs=[
+  {id:'seeding',label:'Cloud Seeding',min:0,max:100,value:20},
+  {id:'srm',label:'SRM Injection',min:0,max:100,value:0},
+  {id:'cdr',label:'CO₂ Removal',min:0,max:500,value:10},
+  {id:'volcano',label:'Volcanic Aerosols',min:0,max:50,value:0},
+  {id:'solar',label:'Solar Irradiance',min:90,max:110,value:100},
+  {id:'ch4',label:'Methane',min:1600,max:2200,value:1900},
+  {id:'albedo',label:'Albedo Change',min:-10,max:10,value:0},
+  {id:'ocean',label:'Ocean Heat Uptake',min:50,max:150,value:100}
+];
+const slidersContainer=document.getElementById('slidersContainer');
+const sliders=[];
+sliderConfigs.forEach(cfg=>{
+  const wrapper=document.createElement('div');
+  const label=document.createElement('label');
+  label.textContent=cfg.label;
+  const span=document.createElement('span');
+  span.textContent=cfg.value;
+  label.appendChild(span);
+  const input=document.createElement('input');
+  input.type='range'; input.min=cfg.min; input.max=cfg.max; input.value=cfg.value; input.id=cfg.id;
+  input.addEventListener('input',()=>{span.textContent=input.value;});
+  wrapper.appendChild(label); wrapper.appendChild(input); slidersContainer.appendChild(wrapper);
+  sliders.push(input);
+});
+
+// Outputs
+const tempOut=document.getElementById('tempOut'), precOut=document.getElementById('precOut'), co2Out=document.getElementById('co2Out'),
+      slOut=document.getElementById('slOut'), cloudOut=document.getElementById('cloudOut'), ewsOut=document.getElementById('ewsOut'), ecoOut=document.getElementById('ecoOut');
+
+// Chart
+let yearCounter=0, autoRun=false, data=[];
+let state={co2:420,sea:0};
+const ctx=document.getElementById('chartCanvas').getContext('2d');
+const chart=new Chart(ctx,{
+type:'line',
+data:{labels:[],datasets:[
+{label:'Temp (°C)',data:[],yAxisID:'y1',borderColor:'#ff4d4d',fill:true,backgroundColor:'rgba(255,77,77,0.2)'},
+{label:'CO₂ (ppm)',data:[],yAxisID:'y2',borderColor:'#3399ff'},
+{label:'Precip (%)',data:[],yAxisID:'y1',borderColor:'#ffaa00',fill:true,backgroundColor:'rgba(255,170,0,0.2)'},
+{label:'Sea Level (cm)',data:[],yAxisID:'y3',borderColor:'#00cc88'},
+{label:'Eco Impact',data:[],yAxisID:'y1',borderColor:'#00cc44',fill:true,backgroundColor:'rgba(0,204,68,0.15)'},
+{label:'EWS',data:[],yAxisID:'y1',borderColor:'#9900ff'},
+{label:'Cloud (%)',data:[],yAxisID:'y1',borderColor:'#3399ff',fill:true,backgroundColor:'rgba(51,153,255,0.15)'}
+]},
+options:{responsive:true,animation:false,plugins:{legend:{display:true,position:'top'}},scales:{y1:{position:'left'},y2:{position:'right'},y3:{position:'right',suggestedMin:0}}}
+});
+
+// Simulation logic
+function step(){
+yearCounter++;
+let startYear=parseInt(startYearInput.value)||currentYear;
+const currentSimYear=startYear+yearCounter-1;
+const s=Object.fromEntries(sliders.map(sl=>[sl.id,+sl.value]));
+state.co2=Math.max(260,state.co2-s.cdr/7800);
+const rfCO2=5.35*Math.log(state.co2/280);
+const temp=rfCO2*0.3 -0.015*s.srm -0.02*s.volcano + (s.solar-100)*0.02 + (s.ch4-1800)*0.002 -0.03*s.albedo -(s.ocean-100)*0.005;
+state.sea+=Math.max(0,temp*0.3);
+const precip=s.seeding*0.5+temp*5, cloud=20+s.seeding*0.3, ews=Math.max(0,temp*10+s.volcano*0.5+s.srm*0.2), eco=Math.max(0,100-(temp*10+Math.abs(precip)/5+ews/3));
+
+// Update outputs
+tempOut.textContent=temp.toFixed(2)+'°C';
+precOut.textContent=precip.toFixed(0)+'%';
+co2Out.textContent=state.co2.toFixed(1)+' ppm';
+slOut.textContent=state.sea.toFixed(1)+' cm';
+cloudOut.textContent=cloud.toFixed(0)+'%';
+ewsOut.textContent=ews.toFixed(1);
+ecoOut.textContent=eco.toFixed(0);
+
+// Update chart
+data.push({year:currentSimYear,temp,co2:state.co2,precip,sea:state.sea,eco,ews,cloud});
+chart.data.labels.push(currentSimYear);
+chart.data.datasets[0].data.push(temp);
+chart.data.datasets[1].data.push(state.co2);
+chart.data.datasets[2].data.push(precip);
+chart.data.datasets[3].data.push(state.sea);
+chart.data.datasets[4].data.push(eco);
+chart.data.datasets[5].data.push(ews);
+chart.data.datasets[6].data.push(cloud);
+chart.update();
+}
+
+// Buttons
+document.getElementById('runYear').onclick=step;
+const autoBtn=document.getElementById('auto');
+autoBtn.onclick=()=>{autoRun=!autoRun;autoBtn.textContent=autoRun?"Stop Timeline":"Play Timeline"; if(autoRun) loop();}
+function loop(){if(!autoRun) return; step(); setTimeout(loop,400);}
+
+document.getElementById('reset').onclick=()=>{
+yearCounter=0;state.co2=420;state.sea=0;data=[];chart.data.labels=[];chart.data.datasets.forEach(ds=>ds.data=[]);chart.update();
+tempOut.textContent='0°C';precOut.textContent='0%';co2Out.textContent='420 ppm';slOut.textContent='0 cm';cloudOut.textContent='0%';ewsOut.textContent='0';ecoOut.textContent='0';
+};
+
+document.getElementById('export').onclick=()=>{
+let csv="year,temp,co2,precip,sea,eco,ews,cloud\n";
+data.forEach(r=>csv+=`${r.year},${r.temp},${r.co2},${r.precip},${r.sea},${r.eco},${r.ews},${r.cloud}\n`);
+const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([csv],{type:'text/csv'}));a.download='simulation.csv';a.click();
+};
+</script>
+</body>
+</html>
